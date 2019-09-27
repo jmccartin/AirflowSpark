@@ -1,18 +1,19 @@
 import argparse
 import logging
+import os
 
 from pyspark.sql import SparkSession
 
-from airflow_example.projects.example_dag.example_spark_nodes import *
+from airflow_example.module_utils import import_all_nodes
+
 
 def setup_spark_context(app_name):
-
     # Initialise the Spark Context
     return (
         SparkSession
         .builder
         .appName(app_name)
-        #.master("local")
+        .master("local")
         .getOrCreate()
     )
 
@@ -21,9 +22,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("node")
     parser.add_argument("execution_date")
-    # parser.add_argument("year", type=int)
-    # parser.add_argument("month", type=int)
-    # parser.add_argument("--configuration", "-c", help="the path to the config folder", type=str)
     parser.add_argument("--log", "-l", help="set the logging level", type=str, default="INFO")
 
     args = parser.parse_args()
@@ -42,10 +40,17 @@ if __name__ == "__main__":
     # Initialise the Spark Context
     sparkSession = setup_spark_context(args.node)
 
+    # Automatically load all of the project files
+    project_path = os.path.join("airflow_example", "projects")
+    for project_items in import_all_nodes(path=project_path).items():
+        for node in project_items[1]:
+            globals()[node.__name__] = node
+
     if args.node not in globals():
         raise ModuleNotFoundError(f"Could not find node: {args.node} in order for it to be run. "
                                   f"Has this been imported correctly?")
 
+    # Initialise the node with the sparkSession object
     node = globals()[args.node](sparkSession)
 
     date_split = args.execution_date.split("-")
@@ -56,18 +61,3 @@ if __name__ == "__main__":
     node.write_table(year=date_split[0], month=date_split[1])
 
     logging.info("Finished generating node.")
-
-
-
-# import os
-# import glob
-
-# current_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
-# print(current_dir)
-# for file in glob.glob(os.path.join(current_dir, "projects", "*", "*.py")):
-#     name = os.path.splitext(os.path.basename(file))[0]
-#     print(name)
-#     # add package prefix to name, if required
-#     module = __import__(name)
-#     for member in dir(module):
-#         print(member)

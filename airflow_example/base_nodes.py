@@ -12,6 +12,7 @@ from pyspark.sql.types import StructType, StructField, IntegerType
 from airflow_example.configuration import Configuration
 from airflow_example.time_utils import evaluate_periods, Static
 
+
 class AbstractNode(ABC):
     @abstractmethod
     def generate_node(self, year, month) -> DataFrame:
@@ -19,7 +20,7 @@ class AbstractNode(ABC):
 
 
 class BaseTableNode(AbstractNode):
-    def __init__(self, sparkSession):
+    def __init__(self, sparkSession=None):
         self._schema = None
         self._hdfs_paths = None
         self.configuration = Configuration("config/configuration.yml")
@@ -76,7 +77,6 @@ class BaseTableNode(AbstractNode):
                 if field.dataType != col_schema.dataType:
                     raise TypeError(f"Column: {field.name} has an unexpected type "
                                     f"(expected {field.dataType}, found {col_schema.dataType}).")
-
 
     def get_dataframe(self) -> DataFrame:
         """

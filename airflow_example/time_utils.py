@@ -11,11 +11,14 @@ def last_day_of_month(any_day: datetime.datetime):
 def last():
     pass
 
+
 def Daily():
     pass
 
+
 def Monthly():
-    pass
+    return "@monthly"
+
 
 def Static():
     pass

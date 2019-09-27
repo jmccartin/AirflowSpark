@@ -11,11 +11,10 @@ class LocaleHeights(BaseTableNode):
     """
     Calculates the heights for each locale
     """
-    def __init__(self, sparkSession):
+    def __init__(self, sparkSession=None):
         super().__init__(sparkSession)
 
         self.dependency_list = [
-            People(sparkSession).set_period(period_start=tu.last()),
             People(sparkSession).set_period(period_start=tu.last())
         ]
 
@@ -44,7 +43,7 @@ class CountryHeights(BaseTableNode):
     """
     Shows the top heights per country
     """
-    def __init__(self, sparkSession):
+    def __init__(self, sparkSession=None):
         super().__init__(sparkSession)
 
         self.dependency_list = [
