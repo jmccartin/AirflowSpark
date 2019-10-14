@@ -1,0 +1,12 @@
+general:
+  # If True, then files are read from S3
+  aws: True
+  # Base path of where data is written. Each node appends
+  # data to the path: base_path/project_name/node_name/parquet.
+  # If running on AWS, the bucket name is appended to the path.
+  base_path: "data"
+  #base_path: "/Users/jmccartin/Outra/Github/outraflow/resources/"
+
+s3:
+  bucket: "outra-dev-dataiku-emr"
+

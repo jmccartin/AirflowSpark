@@ -1,18 +1,20 @@
 from pyspark.sql import functions as f
 from pyspark.sql.types import *
 
-from airflow_example.base_nodes import BaseDataSource
-import airflow_example.time_utils as tu
+from src.main.python.base_nodes import BaseDataSource
+import src.main.python.time_utils as tu
 
 
 class Countries(BaseDataSource):
-    def __init__(self, sparkSession):
-        super().__init__(sparkSession)
+    def __init__(self, configuration, period_offset=0):
+        super().__init__(configuration, period_offset)
 
-        self.dependency_list = []
         self.period = tu.Static()
 
         self.schema = StructType([
             StructField("locale", StringType(), True),
             StructField("country", StringType(), True),
         ])
+
+    def set_dependencies(self):
+        self.dependency_list = []

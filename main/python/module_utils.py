@@ -17,12 +17,12 @@ def node_finder(py_file: str) -> List[str]:
         for line in f:
             if line.lstrip().startswith("class"):
                 class_name = line.split("(")[0].split(" ")[-1]
-                logging.info(f"found class: {class_name}")
+                logging.debug(f"Found class: {class_name}")
                 class_list.append(class_name)
     return class_list
 
 
-def import_all_nodes(path):
+def import_all_nodes(path: str) -> dict:
     """
     Finds all nodes within the project directory and imports them
     :param path: path to the projects folder
@@ -37,7 +37,7 @@ def import_all_nodes(path):
         if (not os.path.isdir(dag_dir)) or os.path.basename(dag_dir).startswith("__"):
             continue
 
-        initialised_nodes = []
+        initialised_nodes = {}
 
         for py_file in glob.glob(os.path.join(dag_dir, "*.py")):
             py_path = py_file.replace(os.path.sep, ".").rstrip(".py")
@@ -50,8 +50,29 @@ def import_all_nodes(path):
                     raise ImportError(f"There is already a defined node class called {node_name}."
                                       f"Please use unique names.")
                 module = importlib.import_module(py_path)
-                initialised_nodes.append(getattr(module, node_name))
+                initialised_nodes[node_name] = getattr(module, node_name)
 
         module_dict[os.path.basename(dag_dir)] = initialised_nodes
 
     return module_dict
+
+
+def find_endpoints(d: dict) -> List[str]:
+    """
+    Finds the endpoints in a DAG by iterating through a dictionary.
+    :param d: dictionary of the node names, with the names of the dependencies as a value list
+    :return: list of the endpoint node names
+    """
+    endpoints = []
+    rev = {}
+    for key, values in d.items():
+        for value in values:
+            if value not in rev.keys():
+                rev[value] = [key]
+            else:
+                rev[value].append(key)
+
+    for key in d.keys():
+        if key not in rev.keys():
+            endpoints.append(key)
+    return endpoints
