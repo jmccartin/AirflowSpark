@@ -1,71 +1,101 @@
+# PySpark
+from pyspark.sql import DataFrame, functions as f, SparkSession
+from pyspark.sql.types import StructType, StructField, IntegerType
+from pyspark.sql.utils import AnalysisException
+
 # Python libraries
 from abc import ABC, abstractmethod
 import boto3
-from datetime import date
+from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 import inspect
 import glob
 import logging
 import os
-import shutil
-from typing import Any, List, Tuple
-
-# PySpark
-from pyspark.sql import DataFrame, functions as f
-from pyspark.sql.types import StructType, StructField, IntegerType
+import yaml
 
 # Project files
-from src.main.python.spark_main import setup_sparkSession
-from src.main.python.time_utils import current, chronological_sorter, Static
+from src.main.python.utils.filestore import list_table_partitions, clear_table_partition
+from src.main.python.utils.time import chronological_sorter
 
 
 class AbstractNode(ABC):
-    @abstractmethod
-    def generate_node(self, year, month) -> DataFrame:
-        pass
 
     @abstractmethod
-    def set_dependencies(self):
-        pass
+    def generate_node(self, year: int, month: int) -> DataFrame:
+        raise NotImplementedError
 
 
 class BaseTableNode(AbstractNode):
     """
-    Base class for all interactions with a parquet-based table
+    Base class for all interactions with a parquet-based table.
+
+    The Spark Session can't be initialised in the init due to Airflow needing access
+    to various class properties (fills the server with JVM processes). Therefore it is
+    set to None here and is initialised just before it's needed in the various methods.
     """
 
     def __init__(self, configuration, period_offset):
         self._hdfs_paths = None
         self._schema = None
+        self._sparkSession = None
+        self._dependency_list = []
         self.configuration = configuration
-        self._sparkSession = self._get_sparkSession()
-        self.project_name = inspect.getfile(self.__class__).split("/")[-2]
-        self.base_path = self.get_base_path()
-        self.table_path = os.path.join(self.base_path, self.project_name, self.__class__.__name__)
+        self.project_name: str = inspect.getfile(self.__class__).split("/")[-2]
+        self.base_path: str = self.get_base_path()
+        self.table_path: str = os.path.join(self.base_path, self.__class__.__name__)
         self.period_offset = period_offset
         self.parent_offset = 0
-        self.dependency_list = []
-        self.set_dependencies()
 
     def __str__(self):
         return f"{self.__class__.__name__}:offset={self.total_offset}"
 
     __repr__ = __str__
 
-    def _get_sparkSession(self):
-        return setup_sparkSession(self.configuration.node_name, self.configuration.settings.get("deploy_mode"))
+    def init_sparkSession(self):
+        self._sparkSession = SparkSession.builder.getOrCreate()
 
     def get_base_path(self) -> str:
         """
         Gets the prefix for the file store location
         """
+
         base_path = self.configuration.settings.get("base_path")
         # Append the bucket and s3 prefix to the path
         if self.configuration.settings.get("aws"):
             bucket = self.configuration.s3.get("bucket")
-            return f"s3://{bucket}/{base_path}/{self.project_name}"
+            return f"s3://{bucket}/{base_path}/projects/{self.project_name}"
         else:
             return os.path.join("file:", base_path, self.project_name)
+
+    def get_project_configuration(self) -> dict:
+        """
+        Gets the project-level configuration.
+        Configuration files must be placed in a similar folder structure as
+        to the project, under the config directory, with name 'configuration.yml'.
+
+        If running tests, the configurations will be read from a similar
+        directory tree, only starting from the 'test' folder. This is useful
+        for testing methods such as loops through a list, with only a single
+        entry instead of a large list in normal operation.
+        :return: Loaded configuration (dict-like object).
+        """
+
+        # TODO: Remove explicit checking for test cases!
+        if self.configuration.settings.get("is_test"):
+            path = os.path.join("config", "test", "projects", self.project_name, "configuration.yml")
+        else:
+            path = os.path.join("config", "projects", self.project_name, "configuration.yml")
+        with open(path, "r") as config_file:
+            return yaml.safe_load(config_file)
+
+    @property
+    def dependency_list(self):
+        return self._dependency_list
+
+    @dependency_list.setter
+    def dependency_list(self, d_list):
+        self._dependency_list = d_list
 
     @property
     def schema(self) -> StructType:
@@ -85,45 +115,32 @@ class BaseTableNode(AbstractNode):
         matches the schema defined in the class. If extra columns are
         present, these are dropped from the ouput.
         """
+
         select_cols = []
+        if not self.schema:
+            raise Exception(f"You have not specified a schema for the class: {self.__class__.__name__}")
         for field in self.schema:
             if field.name not in ["year", "month"]:
                 if field.name not in dataframe.columns:
-                    raise IndexError(f"Can not find schema column: {field.name} in output dataframe.")
+                    dataframe = dataframe.withColumn(field.name, f.lit(None).cast(field.dataType))
+                    logging.warning(f"The column '{field.name}' was not found in output dataframe. "
+                                    f"Appending null values.")
                 col_schema = dataframe.select(field.name).schema[0]
                 if field.dataType != col_schema.dataType:
-                    raise TypeError(f"Column: {field.name} has an unexpected type "
+                    raise TypeError(f"The column '{field.name}' has an unexpected type "
                                     f"(expected {field.dataType}, found {col_schema.dataType}).")
                 select_cols.append(col_schema.name)
         return dataframe.select(select_cols)
-
-    def verify_schema(self, dataframe: DataFrame) -> None:
-        """
-        Similar to fit_to_schema, only this method verifies the schema, and
-        if it doesn't match the schema defined in the class, an exception
-        is thrown.
-        :param dataframe: the spark dataframe on which to verify the schema
-        :return:
-        """
-        schema_fields = [field.name for field in self.schema if field.name not in ["year", "month"]]
-        if sorted(schema_fields) != sorted(dataframe.columns):
-            raise IndexError(f"The data for the node: <{self.__class__.__name__}> with columns: {dataframe.columns} "
-                             f"does not match the defined schema {schema_fields}")
-        for field in self.schema:
-            if field.name not in ["year", "month"]:
-                col_schema = dataframe.select(field.name).schema[0]
-                if field.dataType != col_schema.dataType:
-                    raise TypeError(f"Column: {field.name} has an unexpected type "
-                                    f"(expected {field.dataType}, found {col_schema.dataType}).")
 
     def get_dataframe(self, year, month) -> DataFrame:
         """
         Returns a dataframe for the given dependency over the given period.
         :return: Spark SQL DataFrame
         """
+        if not self._sparkSession:
+            self.init_sparkSession()
         self.set_paths(year, month)
         dependency_df = self._sparkSession.read.parquet(str(*self._hdfs_paths))
-        self.verify_schema(dependency_df)
 
         return dependency_df
 
@@ -135,7 +152,14 @@ class BaseTableNode(AbstractNode):
         return self.period_offset + self.parent_offset
 
     def set_paths(self, year, month):
-        # Get the dependency dates that are offset relative to the node being run
+        """
+        Sets the hdfs paths of the dependency to that of the dates
+        which are offset according to what is defined in the node.
+        """
+        # TODO: Fix this so that evaluate_paths is actually used again.
+        #       This should also correctly check the period offset type,
+        #       and probably should also be a getter/setter
+
         dep_date = date(year, month, 1) - relativedelta(months=self.period_offset)
         self._hdfs_paths = [
             os.path.join(self.base_path,
@@ -144,51 +168,17 @@ class BaseTableNode(AbstractNode):
                          f"month={dep_date.month}")
         ]
 
-
-    def evaluate_paths(self, year, month):
+    def evaluate_paths(self, year, month) -> None:
         """
         Determines the paths on HDFS/local filesystem with respect to the run date
-        :param year: year (int) of the run date
-        :param month: month (int) of the run date
         """
 
-        if self.configuration.settings.get("aws"):
-            bucket = self.configuration.s3.get("bucket")
-            logging.info(f"Running on AWS. Getting paths for S3 bucket: {bucket}.")
-            s3 = boto3.resource("s3")
-            s3_bucket = s3.Bucket(bucket)
-            all_paths_set = set()
-            for bucket_object in s3_bucket.objects.filter(Prefix=self.configuration.settings.get("base_path")):
-                path = "/".join(bucket_object.key.split("/")[:-1])
-                if self.configuration.settings.get("force_regen"):
-                    # Only consider successfully completed paths
-                    if "_SUCCESS" in bucket_object.key:
-                        all_paths_set.add(path)
-                    else:
-                        all_paths_set.add(path)
-            all_paths = list(all_paths_set)
-        else:
-            logging.info("Running on local environment. S3 disabled.")
-            if not os.path.exists(self.base_path):
-                raise FileNotFoundError(f"The directory {self.base_path} does not exist")
-            all_paths_set = set()
-            for path in glob.glob(os.path.join(self.table_path, "*", "*", "*")):
-                if self.configuration.settings.get("force_regen"):
-                    # Only consider successfully completed paths
-                    if "_SUCCESS" in path:
-                        all_paths_set.add(path)
-                else:
-                    all_paths_set.add(path)
-            all_paths = list(all_paths_set)
-
-        filtered_paths = list(filter(lambda p: chronological_sorter(p) <= f"{year}.{month:02d}", all_paths))
+        found_paths = [p[0] for p in list_table_partitions(self.table_path)]
+        filtered_paths = list(filter(lambda p: chronological_sorter(p) <= f"{year}.{month:02d}", found_paths))
         chronological_paths = sorted(filtered_paths, key=chronological_sorter)
         neat_order = "\n" + "\n".join(chronological_paths)
         logging.debug(f"Returning paths: {neat_order}")
         self._hdfs_paths = chronological_paths[-(self.total_offset() + 1):]
-
-    def get_period(self) -> Tuple[str, str]:
-        pass
 
     def write_table(self, year, month) -> None:
         """
@@ -196,35 +186,75 @@ class BaseTableNode(AbstractNode):
         month, as a series of parquet files. Will overwrite any existing partition
         if the node period is static.
         """
+
+        # Ensure a dataframe is returned by the node's generate method
+        # and add the generated date to the schema.
+        output = self.generate_node(year, month)
+
+        if not output:
+            raise Exception(f"Nothing was returned by the node's generate method.")
+
         output_df = (
-            self.generate_node(year, month)
+            output
             .withColumn("year", f.lit(year))
             .withColumn("month", f.lit(month))
         )
 
         # Remove any previously-generated files for the month for that node
-        node_current = os.path.join(self.table_path, f"year={year}", f"month={month}")
-        if self.configuration.settings.get("aws"):
-            s3 = boto3.resource("s3")
-            bucket = self.configuration.s3.get("bucket")
-            s3_bucket = s3.Bucket(bucket)
-            keys = s3_bucket.objects.filter(Prefix=node_current)
-            if len(keys) != 0:
-                logging.warning(f"Found previously generated data for year={year}, month={month}. Removing files.")
-                # TODO: Fix this!
-                s3_bucket.delete_key(*keys)
-        else:
-            if os.path.exists(node_current):
-                logging.warning(f"Found previously generated data for year={year}, month={month}. Removing files.")
-                shutil.rmtree(node_current)
+        clear_table_partition(f"{self.table_path}/year={year}/month={month}")
 
         output_df.write.parquet(path=self.table_path, partitionBy=["year", "month"], mode="append")
+
+
+class BaseWideTable(BaseTableNode):
+    """
+    Overrides the fit_to_schema method of the BaseTableNode,
+    for nodes that have very many columns (wide tables). For
+    such cases, manually specifying the schema can be more
+    pain than it's worth, given such tables change regularly
+    over time.
+
+    Since the wide tables are typically made by joining
+    dataframes, an id column must be present in the schema.
+    """
+
+    def __init__(self, configuration, period_offset=0):
+        super().__init__(configuration, period_offset)
+        self.id_col = None
+
+    def fit_to_schema(self, dataframe: DataFrame) -> DataFrame:
+
+        try:
+            dataframe.select(self.id_col).columns
+        except AnalysisException:
+            raise Exception(f"You have not specified a an id column for the class: {self.__class__.__name__}")
+
+        return dataframe
 
 
 class BaseDataSource(BaseTableNode):
     """
     Class for which there is no dependency, and therefore no generate method required.
     """
+    def __init__(self, configuration, period_offset=0):
+        super().__init__(configuration, period_offset)
+        self.base_path = self.get_base_path()
+        self.dataiku_project_name = ""
+        self.dataiku_table_name = ""
+        self.table_path = os.path.join(self.base_path, self.__class__.__name__)
+        self.dependency_list = []
+
+    def get_base_path(self) -> str:
+        """
+        Gets the prefix for the file store location
+        """
+        base_path = self.configuration.settings.get("base_path")
+        # Append the bucket and s3 prefix to the path
+        if self.configuration.settings.get("aws"):
+            bucket = self.configuration.s3.get("bucket")
+            return f"s3://{bucket}/{base_path}/data_source/{self.project_name}"
+        else:
+            return os.path.join("file:", base_path, self.project_name)
 
     def generate_node(self, year, month) -> DataFrame:
         pass
@@ -234,3 +264,40 @@ class BaseDataSource(BaseTableNode):
 
     def write_table(self, year, month) -> None:
         pass
+
+
+class ExternalDataSource(BaseDataSource):
+    """
+    Case where there is a dependency in another bucket or HDFS-valid URI.
+    The full path to the table must be specified.
+    """
+
+    def __init__(self, configuration, period_offset=0):
+        super().__init__(configuration, period_offset)
+        self.base_path = self.get_base_path()
+
+    def set_external_dependency(self, table_path: str):
+        self.table_path = table_path
+        logging.debug(f"Finding external dependency: {table_path}")
+
+    def get_dataframe(self, year, month) -> DataFrame:
+        """
+        Returns a dataframe for the given dependency over the given period.
+
+        Assumes all source data is in a single partition!
+
+        :return: Spark SQL DataFrame
+        """
+
+        if not self._sparkSession:
+            self.init_sparkSession()
+
+        found_paths = [p[0] for p in list_table_partitions(self.table_path)]
+
+        if len(found_paths) > 1:
+            logging.warning(f"Found external data source {self.table_path} which has multiple partitions!"
+                            f"Reading as one single partition.")
+        elif len(found_paths) == 0:
+            raise FileNotFoundError(f"Cannot find the data source {self.table_path}.")
+
+        return self._sparkSession.read.parquet(*found_paths)

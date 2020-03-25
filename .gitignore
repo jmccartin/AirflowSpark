@@ -17,6 +17,9 @@ Icon
 .coverage
 coverage.xml
 
+# Python virtual environments
+.venv
+
 # Files that might appear in the root of a volume
 .DocumentRevisions-V100
 .fseventsd

@@ -1,3 +1,10 @@
-apache-airflow[hdfs,hive,s3,slack,ssh]
+apache-airflow[hdfs,hive,postgres,s3,slack]
+boto3
+cryptography
 mimesis
-pyspark==2.4.*
+moto
+pandas
+pyarrow==0.14.*
+pymorton
+pyspark>=2.4
+pyyaml
