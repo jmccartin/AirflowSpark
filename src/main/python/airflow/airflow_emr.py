@@ -2,6 +2,7 @@
 from airflow import AirflowException
 from airflow.contrib.operators.emr_create_job_flow_operator import EmrCreateJobFlowOperator
 from airflow.contrib.operators.emr_terminate_job_flow_operator import EmrTerminateJobFlowOperator
+from airflow.contrib.operators.spark_submit_operator import SparkSubmitOperator
 from airflow.contrib.sensors.emr_job_flow_sensor import EmrJobFlowSensor
 from airflow.models import DAG
 
@@ -10,7 +11,6 @@ import os
 from typing import List, Tuple
 
 # Module
-from src.main.python.airflow.airflow_overrides import SparkSubmitOperatorEMR
 from src.main.python.configuration import Configuration
 from src.main.python.utils.emr import create_yarn_dir
 
@@ -282,7 +282,7 @@ def submit_spark_job(dag: DAG,
     project_files = os.path.join("target", "project_files.zip")
     py_files = f"{project_files},config/spark/log4j.properties"
 
-    return SparkSubmitOperatorEMR(
+    return SparkSubmitOperator(
         application=os.path.join("src", "main", "python", "spark_main.py"),
         name=spark_ui_name,
         conf=spark_conf,
