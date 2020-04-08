@@ -1,31 +1,25 @@
+# PySpark
+from pyspark.sql import SparkSession
+
+# Python
 import argparse
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import logging
 import os
-from typing import Tuple
+import zipfile
 
-from pyspark import SparkConf
-from pyspark.sql import SparkSession
-
+# Module
 from src.main.python.configuration import Configuration
-from src.main.python.module_utils import import_all_nodes
+from src.main.python.utils.modules import import_all_nodes
 
-
-def setup_sparkSession(app_name, master, sparkConf=None):
-
-    if not sparkConf:
-        sparkConf = SparkConf()
-
-    # Initialise the Spark Context
-    return (
-        SparkSession
-        .builder
-        .config(conf=sparkConf)
-        .appName(app_name)
-        .master(master)
-        .getOrCreate()
-    )
+# When being run via spark-submit, extract the project files
+# so that the relative paths remain consistent (for all
+# configuration and other non-python files).
+if os.path.exists("project_files.zip"):
+    zipfile.ZipFile("project_files.zip").extractall()
+else:
+    raise FileNotFoundError("Could not find project_files.zip in the list of Spark files on the master node.")
 
 
 if __name__ == "__main__":
@@ -49,13 +43,25 @@ if __name__ == "__main__":
                         format="%(asctime)s [%(levelname)s] %(message)s",
                         datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Initialise the Spark Context
-    sparkSession = setup_sparkSession(args.node, master="local")
-    configuration = Configuration("config/configuration.yml", node_name=args.node)
+    configuration = Configuration(os.path.join("config", "configuration.yml"), node_name=args.node)
 
-    # Automatically load all of the project files
+    # Initialise the Spark Context. Here, the master and configuration will be
+    # set by the process submitting the job to the cluster. We just need to set
+    # the app name so that the object will act as a singleton and be picked up
+    # by the classes downstream.
+
+    sparkSession = (
+        SparkSession
+        .builder
+        .appName(args.node)
+        .getOrCreate()
+    )
+
+    # Automatically load all project files. This needs to be done in order
+    # to obtain class parameters of the node that is set to be run.
     project_path = os.path.join("src", "main", "python", "projects")
     if not os.path.exists(project_path):
+        print(os.path.abspath(project_path))
         raise NotADirectoryError(f"Could not find the project path: {project_path}. Does it exist?")
 
     for project_items in import_all_nodes(path=project_path).items():
@@ -66,8 +72,14 @@ if __name__ == "__main__":
         raise ModuleNotFoundError(f"Could not find node: {args.node} in order for it to be run. "
                                   f"Has this been imported correctly?")
 
-    # Initialise the node with the sparkSession object
+    # Initialise the node with the configuration and period offset
     node = globals()[args.node](configuration, args.relative_offset)
+    node.init_sparkSession()
+
+    # Sets the Spark checkpoint location for the entire project. Checkpointing is used
+    # when needing to persist to disk in order to break lineage for complicated tasks.
+    sc = sparkSession.sparkContext
+    sc.setCheckpointDir(os.path.join(node.base_path, "tmp"))
 
     date_split = args.execution_date.split("-")
     if len(date_split) != 3:

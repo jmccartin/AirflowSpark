@@ -1,0 +1,30 @@
+general:
+  # If True, then files are read from S3
+  aws: False
+  # Spark deploy mode (only local and yarn are supported)
+  deploy_mode: local
+  # Base path of where data is written. Each node appends
+  # data to the path: base_path/project_name/node_name/parquet.
+  # If running on AWS, the bucket name is appended to the path.
+  base_path: "data/airflow"
+  is_test: True  # For unit testing only
+
+s3:
+  bucket: test-emr-bucket
+
+# Spark defaults for jobs submitted to the cluster
+spark:
+  queue: default
+
+# EMR defaults for Amazon Web Services
+emr:
+  releaseLabel: emr-5.24.0
+  masterInstanceType: m4.large
+
+# Specific project configurations for Spark and EMR.
+# Configuration settings for each project pertaining to the running
+# of code belongs in the project-level configuration.
+projects:
+  test_project:
+    emr:
+      masterInstanceType: m4.4xlarge

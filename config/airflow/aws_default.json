@@ -1,0 +1,2 @@
+// Defaults for AWS in Airflow Connections page
+{"region_name": "eu-west-1"}

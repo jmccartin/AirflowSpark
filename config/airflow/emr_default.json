@@ -1,0 +1,27 @@
+{
+    "LogUri": "",
+    "Applications":[
+        { "Name": "Spark" },
+        { "Name": "Hadoop" }
+    ],
+    "VisibleToAllUsers": true,
+    "JobFlowRole": "",
+    "ServiceRole": "",
+    "Tags": [
+        {
+            "Key": "",
+            "Value": ""
+        }
+    ],
+    "Configurations": [
+        {
+            "Classification":"hive-site",
+            "Properties":{
+                "javax.jdo.option.ConnectionURL": "",
+                "javax.jdo.option.ConnectionDriverName": "",
+                "javax.jdo.option.ConnectionUserName": "",
+                "javax.jdo.option.ConnectionPassword": ""
+            }
+        }
+    ]
+}

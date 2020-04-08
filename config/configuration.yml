@@ -1,0 +1,61 @@
+# ------------------------- #
+# - Airflow Configuration - #
+# ------------------------- #
+# This is the configuration for the execution of jobs
+
+general:
+  # If True, then files are read from S3
+  aws: True
+  # Spark deploy mode (only local and yarn are supported)
+  deploy_mode: local[1]
+  # Base path of where data is written. Each node appends
+  # data to the path: base_path/project_name/node_name/parquet.
+  # If running on AWS, the bucket name is appended to the path.
+  base_path: data/airflow
+  # For unit testing only, will be removed once proper dependency injection is enabled
+  is_test: False
+
+s3:
+  bucket: example-bucket
+
+# Spark defaults for jobs submitted to the cluster
+spark:
+  queue: default
+  executor_memory: 3.5g
+  pyspark_python: python37
+  pyspark_driver_python: python37
+  executor_memoryOverhead: 1200
+  executor_cores: 2
+
+# EMR defaults for Amazon Web Services
+emr:
+  regionName: "us-east-1"
+  releaseLabel: emr-5.24.0
+  ebsRootVolumeSize: 50
+  bootstrapScriptName: bootstrap.sh
+  masterInstanceType: m4.large
+  coreInstanceType: m4.4xlarge
+  coreInstanceNum: 1
+  ec2SubnetId: ec2SubnetId
+  additionalMasterSecurityGroups:
+    - examplegroup1
+    - examplegroup2
+  ec2KeyName: ec2KeyName
+  serviceRole: serviceRole
+  jobFlowRole: jobFlowRole
+  tags:
+    - example-tag: example-tag
+
+
+# Specific project configurations for Spark and EMR.
+# Configuration settings for each project pertaining to the running
+# of code belongs in the project-level configuration.
+projects:
+  example:
+    emr:
+      coreInstanceType: r4.8xlarge
+      coreInstanceNum: 1
+      ebsRootVolumeSize: 512
+    spark:
+      executor_memory: 8g
+      executor_cores: 2
